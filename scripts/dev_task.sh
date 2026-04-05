@@ -20,7 +20,7 @@ Usage:
 Commands:
   start   Create or refresh artifacts/current-task.md
   check   Run scripts/review_harness.sh
-  review  Run scripts/run_reviewer.sh
+  review  Run scripts/run_reviewer.sh with git-aware review context
   finish  Run scripts/finalize_change.sh
   status  Show task and review artifact paths plus next commands
 EOF
@@ -98,6 +98,7 @@ print_status() {
   echo "  3. bash scripts/dev_task.sh check"
   echo "  4. bash scripts/dev_task.sh review"
   echo "  5. bash scripts/dev_task.sh finish"
+  echo "[dev-task] note: review now prefers current git working tree changes over full-project scope"
 }
 
 main() {
