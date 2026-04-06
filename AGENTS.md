@@ -30,7 +30,7 @@ bash scripts/review_harness.sh
 REVIEW_CHECKLIST.md
 ```
 
-3. 优先通过统一入口生成或更新：
+3. 优先通过统一入口生成或更新 reviewer packet：
 
 ```bash
 bash scripts/dev_task.sh review
@@ -38,19 +38,34 @@ bash scripts/dev_task.sh review
 
 等价命令为：
 
-```text
-artifacts/review-report.md
-```
-
-其中 `artifacts/review-report.md` 必须先通过以下命令生成最新 reviewer 包：
-
 ```bash
 bash scripts/run_reviewer.sh
 ```
 
-4. 如果存在 `P1` 或 `P2` finding，则不得结束，必须继续修复
+4. 在 reviewer packet 生成后，必须完成一次真正的 findings-first code review：
 
-5. 最终对用户的完成说明，必须包含：
+- review 必须基于以下输入材料：
+  - `REVIEW_PROMPT.md`
+  - `REVIEW_CHECKLIST.md`
+  - `artifacts/current-task.md`
+  - `artifacts/review-report.md`
+  - 当前改动涉及的源码文件
+- reviewer 角色只读，不直接修改代码
+- review 输出必须包含：
+  - `Findings`
+  - `Residual Risks`
+  - `Verdict`
+- 每条 finding 必须包含：
+  - Severity
+  - File
+  - Why it matters
+- 如果没有问题，明确写 `No findings`
+- review 结果必须回填到：
+  - `artifacts/review-report.md`
+
+5. 如果存在 `P1` 或 `P2` finding，则不得结束，必须继续修复
+
+6. 最终对用户的完成说明，必须包含：
    - 已运行的检查命令
    - 检查结果
    - 是否存在 findings
@@ -74,6 +89,9 @@ Reviewer 角色必须遵守：
 - 不允许在未执行 harness 的情况下宣告完成
 - 不允许跳过 `scripts/run_reviewer.sh`
 - 不允许跳过 `artifacts/review-report.md`
+- 不允许只生成 reviewer packet 而不执行真正的 code review
+- 不允许在存在 `P1` 或 `P2` finding 时宣告完成
+- 不允许让 reviewer 同时承担实现者角色并直接修改代码
 - 不允许用模糊表达替代结论，例如“应该没问题”“大概率可以”
 
 ## Goal

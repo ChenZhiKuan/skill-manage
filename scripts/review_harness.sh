@@ -65,6 +65,9 @@ if expr == "health_ok":
     assert payload.get("status") == "ok", payload
 elif expr == "skills_nonempty":
     assert isinstance(payload, list) and len(payload) > 0, payload
+elif expr == "discover_recommendations":
+    assert payload.get("mode") == "recommend", payload
+    assert isinstance(payload.get("suggestions"), list) and len(payload["suggestions"]) > 0, payload
 else:
     raise AssertionError(f"unknown assertion: {expr}")
 PY
@@ -102,6 +105,19 @@ assert skills[0].skill_path in detail_html
 
 health_json = module.render_json({"status": "ok"}).decode("utf-8")
 assert '"status": "ok"' in health_json
+
+discover_payload = module.discover_skills("")
+assert discover_payload["mode"] == "recommend"
+assert len(discover_payload["suggestions"]) > 0
+
+sample_output = """
+vercel-labs/agent-skills@vercel-react-best-practices 261.1K installs
+└ https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practices
+"""
+parsed = module.parse_find_results(sample_output)
+assert len(parsed) == 1
+assert parsed[0].package == "vercel-labs/agent-skills@vercel-react-best-practices"
+assert parsed[0].url == "https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practices"
 PY
 
 echo "[review] step 3/5: optional bind smoke mode"
@@ -114,6 +130,7 @@ if [[ "${RUN_BIND_SMOKE}" == "1" ]]; then
   echo "[review] step 4/5: endpoint checks"
   assert_json_contains "${BASE_URL}/api/health" "health_ok"
   assert_json_contains "${BASE_URL}/api/skills" "skills_nonempty"
+  assert_json_contains "${BASE_URL}/api/discover-skills" "discover_recommendations"
 
   echo "[review] step 5/5: page smoke checks"
   curl -fsS "${BASE_URL}/" >/dev/null

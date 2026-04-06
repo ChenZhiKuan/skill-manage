@@ -22,6 +22,7 @@
 - 首页支持按路径分类和按功能分类切换
 - 支持前端搜索过滤
 - 支持全站主题切换（浅色 / 深色 / 跟随系统）
+- 支持通过 `npx skills` 搜索第三方 skill，并在页面里一键安装
 - 详情页展示对应 `SKILL.md`
 - 内置 `GET /api/skills` 和 `GET /api/health`
 
@@ -42,6 +43,18 @@ http://127.0.0.1:8421
 
 ```bash
 python3 app.py --port 9000
+```
+
+如果你要使用“搜索并安装 skill”功能，当前机器还需要能运行：
+
+```bash
+npx -y skills find react
+```
+
+安装动作会调用：
+
+```bash
+npx -y skills add <owner/repo@skill> -g -y
 ```
 
 ## 扫描路径

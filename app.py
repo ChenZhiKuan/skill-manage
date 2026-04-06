@@ -4,7 +4,9 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import os
 import re
+import subprocess
 import sys
 import textwrap
 import urllib.parse
@@ -19,6 +21,13 @@ from typing import Iterable
 APP_DIR = Path(__file__).resolve().parent
 WORKSPACE_ROOT = APP_DIR.parent
 HOME = Path.home()
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+PACKAGE_LINE_RE = re.compile(
+    r"^(?P<package>[A-Za-z0-9._-]+/[A-Za-z0-9._-]+@[\w./:-]+)(?:\s+(?P<installs>[0-9][0-9.,KMB]*\s+installs))?$"
+)
+SKILLS_URL_RE = re.compile(r"^└\s+(?P<url>https://skills\.sh/\S+)$")
+PACKAGE_SPEC_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+@[\w./:-]+$")
+SKILLS_COMMAND_TIMEOUT = 45
 
 
 ROOT_SPECS: list[tuple[str, Path]] = [
@@ -80,6 +89,40 @@ EXPLICIT_CATEGORY_MAP = {
 }
 
 
+DISCOVER_SUGGESTIONS = [
+    {
+        "label": "React",
+        "query": "react",
+        "description": "组件实践、性能与前端工程",
+    },
+    {
+        "label": "Testing",
+        "query": "testing",
+        "description": "单测、E2E 与自动化校验",
+    },
+    {
+        "label": "PR Review",
+        "query": "pr review",
+        "description": "代码评审与改评审意见",
+    },
+    {
+        "label": "Docs",
+        "query": "docs",
+        "description": "README、文档与知识整理",
+    },
+    {
+        "label": "Automation",
+        "query": "automation",
+        "description": "工作流、脚本与 agent 自动化",
+    },
+    {
+        "label": "GitHub",
+        "query": "github",
+        "description": "PR、issue、CI 与仓库协作",
+    },
+]
+
+
 @dataclass(frozen=True)
 class SkillRecord:
     slug: str
@@ -95,6 +138,16 @@ class SkillRecord:
     relative_folder: str
     readme_path: str | None
     detail_markdown: str
+
+
+@dataclass(frozen=True)
+class DiscoverResult:
+    package: str
+    name: str
+    url: str
+    installs: str
+    source_repo: str
+    description: str
 
 
 def parse_args() -> argparse.Namespace:
@@ -219,6 +272,117 @@ def load_skills() -> list[SkillRecord]:
 
     records.sort(key=lambda item: (CATEGORY_ORDER.index(item.category) if item.category in CATEGORY_ORDER else 999, item.name.lower(), item.folder_path.lower()))
     return records
+
+
+def strip_ansi(text: str) -> str:
+    return ANSI_ESCAPE_RE.sub("", text)
+
+
+def skills_command_env() -> dict[str, str]:
+    env = dict(**os.environ)
+    env["NO_COLOR"] = "1"
+    env["FORCE_COLOR"] = "0"
+    env["CI"] = "1"
+    return env
+
+
+def run_skills_command(args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        timeout=SKILLS_COMMAND_TIMEOUT,
+        env=skills_command_env(),
+        cwd=str(APP_DIR),
+        check=False,
+    )
+
+
+def parse_find_results(raw_output: str) -> list[DiscoverResult]:
+    lines = [strip_ansi(line).strip() for line in raw_output.splitlines()]
+    results: list[DiscoverResult] = []
+
+    for line in lines:
+        if not line:
+            continue
+
+        package_match = PACKAGE_LINE_RE.match(line)
+        if package_match:
+            package = package_match.group("package")
+            skill_name = package.split("@", 1)[1]
+            source_repo = package.split("@", 1)[0]
+            results.append(
+                DiscoverResult(
+                    package=package,
+                    name=skill_name,
+                    url="",
+                    installs=package_match.group("installs") or "",
+                    source_repo=source_repo,
+                    description=f"来自 {source_repo} 的 {skill_name} skill。",
+                )
+            )
+            continue
+
+        url_match = SKILLS_URL_RE.match(line)
+        if url_match and results:
+            last = results[-1]
+            results[-1] = DiscoverResult(
+                package=last.package,
+                name=last.name,
+                url=url_match.group("url"),
+                installs=last.installs,
+                source_repo=last.source_repo,
+                description=last.description,
+            )
+
+    return results
+
+
+def discover_skills(query: str) -> dict[str, object]:
+    cleaned_query = query.strip()
+    if not cleaned_query:
+        return {
+            "mode": "recommend",
+            "query": "",
+            "suggestions": DISCOVER_SUGGESTIONS,
+        }
+
+    command = ["npx", "-y", "skills", "find", *cleaned_query.split()]
+    completed = run_skills_command(command)
+    combined_output = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
+
+    if completed.returncode != 0:
+        raise RuntimeError(strip_ansi(combined_output) or "Skills CLI search failed.")
+
+    items = [asdict(item) for item in parse_find_results(completed.stdout)]
+    return {
+        "mode": "search",
+        "query": cleaned_query,
+        "items": items,
+        "raw_output": strip_ansi(completed.stdout).strip(),
+    }
+
+
+def install_skill(package: str) -> dict[str, object]:
+    normalized = package.strip()
+    if not PACKAGE_SPEC_RE.match(normalized):
+        raise ValueError("Invalid skill package format. Expected owner/repo@skill.")
+
+    command = ["npx", "-y", "skills", "add", normalized, "-g", "-y"]
+    completed = run_skills_command(command)
+    combined_output = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
+    clean_output = strip_ansi(combined_output)
+
+    if completed.returncode != 0:
+        raise RuntimeError(clean_output or "Skills CLI install failed.")
+
+    load_skills.cache_clear()
+    return {
+        "ok": True,
+        "package": normalized,
+        "message": "Installed successfully.",
+        "details": clean_output.strip(),
+    }
 
 
 def group_by(items: Iterable[SkillRecord], key_fn) -> list[tuple[str, list[SkillRecord]]]:
@@ -410,19 +574,43 @@ def render_home(view_mode: str) -> bytes:
       </div>
       <div class="hero-panel">
         <div class="metric">
-          <span class="metric-label">Detected</span>
+          <span class="metric-label">已收录</span>
           <strong>{summary['skills']}</strong>
         </div>
         <div class="metric">
-          <span class="metric-label">Path Buckets</span>
+          <span class="metric-label">扫描路径</span>
           <strong>{summary['paths']}</strong>
         </div>
         <div class="metric">
-          <span class="metric-label">Function Buckets</span>
+          <span class="metric-label">功能分区</span>
           <strong>{summary['categories']}</strong>
         </div>
       </div>
     </header>
+
+    <section class="discover-panel" id="discoverPanel">
+      <div class="discover-head">
+        <div>
+          <p class="eyebrow">Skill Discovery</p>
+          <h2>搜索并安装新 Skill</h2>
+        </div>
+        <p class="discover-note">
+          输入关键词会调用 <code>npx skills find</code> 搜索；留空则显示推荐搜索方向。
+        </p>
+      </div>
+      <form class="discover-toolbar" id="discoverForm">
+        <label class="discover-search">
+          <span>发现更多能力</span>
+          <input id="discoverInput" name="q" type="search" placeholder="输入 react、testing、review、docs 等关键词">
+        </label>
+        <div class="discover-actions">
+          <button class="summary-button discover-submit" type="submit">搜索 Skill</button>
+          <button class="switch-pill discover-reset" id="discoverReset" type="button">恢复推荐</button>
+        </div>
+      </form>
+      <div class="discover-feedback" id="discoverFeedback" aria-live="polite"></div>
+      <div class="discover-results" id="discoverResults"></div>
+    </section>
 
     <section class="toolbar">
       <div class="view-switch">
@@ -568,6 +756,19 @@ class SkillAtlasHandler(BaseHTTPRequestHandler):
             self.respond(HTTPStatus.OK, "application/json; charset=utf-8", render_json(payload))
             return
 
+        if path == "/api/discover-skills":
+            try:
+                search_query = query.get("q", [""])[0]
+                payload = discover_skills(search_query)
+                self.respond(HTTPStatus.OK, "application/json; charset=utf-8", render_json(payload))
+            except RuntimeError as error:
+                self.respond(
+                    HTTPStatus.BAD_GATEWAY,
+                    "application/json; charset=utf-8",
+                    render_json({"ok": False, "message": str(error)}),
+                )
+            return
+
         if path.startswith("/skill/"):
             slug = urllib.parse.unquote(path.removeprefix("/skill/"))
             match = next((skill for skill in load_skills() if skill.slug == slug), None)
@@ -590,9 +791,37 @@ class SkillAtlasHandler(BaseHTTPRequestHandler):
 
         self.respond(HTTPStatus.NOT_FOUND, "text/html; charset=utf-8", render_layout("Not Found", "<main class='empty-state'><h1>Page not found</h1></main>"))
 
+    def do_POST(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+
+        if path != "/api/install-skill":
+            self.respond(HTTPStatus.NOT_FOUND, "application/json; charset=utf-8", render_json({"ok": False, "message": "Not found"}))
+            return
+
+        try:
+            payload = self.read_json_body()
+            package = str(payload.get("package", ""))
+            result = install_skill(package)
+            self.respond(HTTPStatus.OK, "application/json; charset=utf-8", render_json(result))
+        except ValueError as error:
+            self.respond(HTTPStatus.BAD_REQUEST, "application/json; charset=utf-8", render_json({"ok": False, "message": str(error)}))
+        except RuntimeError as error:
+            self.respond(HTTPStatus.BAD_GATEWAY, "application/json; charset=utf-8", render_json({"ok": False, "message": str(error)}))
+        except json.JSONDecodeError:
+            self.respond(HTTPStatus.BAD_REQUEST, "application/json; charset=utf-8", render_json({"ok": False, "message": "Invalid JSON body."}))
+
     def log_message(self, format: str, *args) -> None:
         message = "%s - - [%s] %s\n" % (self.address_string(), self.log_date_time_string(), format % args)
         sys.stderr.write(message)
+
+    def read_json_body(self) -> dict[str, object]:
+        content_length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(content_length).decode("utf-8")
+        payload = json.loads(body or "{}")
+        if not isinstance(payload, dict):
+            raise ValueError("Expected JSON object.")
+        return payload
 
     def respond(self, status: HTTPStatus, content_type: str, payload: bytes) -> None:
         self.send_response(status)
