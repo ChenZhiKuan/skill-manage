@@ -190,7 +190,7 @@ finalize_change.sh
   - `finish` 用于进入完成 gate
   - `status` 用于查看当前任务与 review 文件位置
 - `scripts/run_reviewer.sh`
-  - 自动覆盖生成 `artifacts/review-report.md`
+  - 自动刷新 `artifacts/review-report.md`
   - 优先收集当前 `git status`、staged diff、unstaged diff
   - 如果没有 git 变更，再退化到全项目 scope review
 - `REVIEW_PROMPT.md`
@@ -200,8 +200,22 @@ finalize_change.sh
   - 严格 review 清单
   - 定义 findings-first 输出和严重级别
 - `artifacts/review-report.md`
-  - reviewer 输出模板
-  - 由 `scripts/run_reviewer.sh` 自动覆盖生成
+  - reviewer 输出日志
+  - 由 `scripts/run_reviewer.sh` 自动刷新
+
+### Artifact 保留策略
+
+这套 harness 不再把 `current-task.md` 和 `review-report.md` 当作“单次覆盖文件”，而是按 git 状态维护一组轻量日志：
+
+- git working tree 有未提交改动时：
+  - 新任务条目增量追加到 `artifacts/current-task.md`
+  - 新 reviewer packet / review 结果增量追加到 `artifacts/review-report.md`
+- git working tree 干净时：
+  - 下一次 `start` / `review` 会被视为新一轮开发周期，可以重置当前视图
+- 如果旧文件还是单次覆盖格式：
+  - 脚本会在首次运行时自动迁移成 log 结构，并保留 `Legacy Snapshot`
+
+这样做的目的，是避免同一批未提交改动里连续迭代 A、B 两个需求时，后一个条目把前一个条目直接覆盖掉。
 
 ### 推荐开发流程
 
@@ -253,6 +267,20 @@ bash scripts/finalize_change.sh
 - untracked files
 
 也就是：**优先评审当前工作树中的真实改动，而不是整个仓库。**
+
+### 为什么 task / review 文件要做成增量日志
+
+如果同一批未提交改动里连续做了 A、B 两个需求，而 `current-task.md` 与 `review-report.md` 每次都直接覆盖，就会丢失：
+
+- A 需求最初的任务目标
+- A 需求对应的 reviewer packet
+- A 与 B 在同一批提交里是如何叠加出来的
+
+现在改成增量日志后：
+
+- 同一批未提交改动中的多次迭代可以并列保留
+- 提交后的下一轮开发又可以自然重置为新的起点
+- review 结论和任务目标能和 git working tree 的生命周期更一致
 
 ### 当前这套 harness 解决什么问题
 

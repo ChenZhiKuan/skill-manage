@@ -7,6 +7,11 @@ ARTIFACTS_DIR="$ROOT_DIR/artifacts"
 TASK_FILE="$ROOT_DIR/artifacts/current-task.md"
 REVIEW_FILE="$ROOT_DIR/artifacts/review-report.md"
 TIMESTAMP="$(date '+%Y-%m-%d %H:%M:%S %Z')"
+GIT_TASK_PATHS=(
+  "."
+  ":(exclude)artifacts/current-task.md"
+  ":(exclude)artifacts/review-report.md"
+)
 
 usage() {
   cat <<EOF
@@ -30,21 +35,55 @@ ensure_artifacts_dir() {
   mkdir -p "$ARTIFACTS_DIR"
 }
 
-write_task_packet() {
-  local summary="$1"
+git_has_pending_project_changes() {
+  if ! git -C "$ROOT_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
+    return 1
+  fi
 
-  ensure_artifacts_dir
+  git -C "$ROOT_DIR" status --short --untracked-files=all -- "${GIT_TASK_PATHS[@]}" | grep -q '.'
+}
 
-  cat >"$TASK_FILE" <<EOF
-# Current Task
+task_entry_count() {
+  if [[ ! -f "$TASK_FILE" ]]; then
+    echo 0
+    return
+  fi
+
+  awk '/^## Task Entry [0-9]+$/ { count++ } END { print count + 0 }' "$TASK_FILE"
+}
+
+write_log_header() {
+  local mode="$1"
+  local git_state="$2"
+
+  cat <<EOF
+# Current Task Log
+
+Last updated: $TIMESTAMP
+Update mode: $mode
+Git state before update: $git_state
+
+EOF
+}
+
+write_task_entry() {
+  local entry_number="$1"
+  local summary="$2"
+  local mode="$3"
+  local git_state="$4"
+
+  cat <<EOF
+## Task Entry $entry_number
 
 Generated at: $TIMESTAMP
+Entry mode: $mode
+Git state before update: $git_state
 
-## Goal
+### Goal
 
 $summary
 
-## Required Workflow
+### Required Workflow
 
 1. Read \`AGENTS.md\`
 2. Implement the change
@@ -54,24 +93,92 @@ $summary
 bash scripts/finalize_change.sh
 \`\`\`
 
-## Expected Deliverable
+### Expected Deliverable
 
 - Code changes aligned with the goal
 - Updated \`artifacts/review-report.md\`
 - Findings-first review result
 
-## Notes
+### Notes
 
 - If any \`P1\` or \`P2\` finding exists, completion is blocked.
 - Do not declare completion before the finalize gate passes.
 EOF
+}
 
-  echo "[dev-task] wrote task packet to $TASK_FILE"
+write_task_packet() {
+  local summary="$1"
+  local mode="reset"
+  local git_state="clean"
+  local entry_number="1"
+  local tmp_file
+  tmp_file="$(mktemp -t skill-manage-current-task.XXXXXX)"
+
+  ensure_artifacts_dir
+
+  if git_has_pending_project_changes && [[ -f "$TASK_FILE" ]]; then
+    mode="append"
+    git_state="dirty"
+    entry_number="$(( $(task_entry_count) + 1 ))"
+  fi
+
+  {
+    if [[ "$mode" == "reset" ]]; then
+      write_log_header "$mode" "$git_state"
+    else
+      if [[ -f "$TASK_FILE" ]] && grep -q '^## Task Entry [0-9]\+$' "$TASK_FILE"; then
+        cat "$TASK_FILE"
+        echo
+      elif [[ -f "$TASK_FILE" ]]; then
+        write_log_header "migrated" "legacy"
+        echo "## Legacy Snapshot"
+        echo
+        echo '```md'
+        cat "$TASK_FILE"
+        echo
+        echo '```'
+        echo
+      else
+        write_log_header "$mode" "$git_state"
+      fi
+    fi
+
+    write_task_entry "$entry_number" "$summary" "$mode" "$git_state"
+  } >"$tmp_file"
+
+  mv "$tmp_file" "$TASK_FILE"
+
+  echo "[dev-task] wrote task packet to $TASK_FILE ($mode)"
   echo "[dev-task] next:"
   echo "  - implement the change"
   echo "  - run: bash scripts/dev_task.sh check"
   echo "  - run: bash scripts/dev_task.sh review"
   echo "  - run: bash scripts/dev_task.sh finish"
+}
+
+print_latest_task_entry() {
+  if [[ ! -f "$TASK_FILE" ]]; then
+    echo "[dev-task] no current task packet yet"
+    return
+  fi
+
+  if grep -q '^## Task Entry [0-9]\+$' "$TASK_FILE"; then
+    awk '
+      /^## Task Entry [0-9]+$/ {
+        current = $0 ORS
+        capture = 1
+        next
+      }
+      capture {
+        current = current $0 ORS
+      }
+      END {
+        printf "%s", current
+      }
+    ' "$TASK_FILE"
+  else
+    sed -n '1,120p' "$TASK_FILE"
+  fi
 }
 
 print_status() {
@@ -80,8 +187,8 @@ print_status() {
   echo "[dev-task] review file: $REVIEW_FILE"
 
   if [[ -f "$TASK_FILE" ]]; then
-    echo "[dev-task] current task:"
-    sed -n '1,120p' "$TASK_FILE"
+    echo "[dev-task] latest task entry:"
+    print_latest_task_entry
   else
     echo "[dev-task] no current task packet yet"
   fi

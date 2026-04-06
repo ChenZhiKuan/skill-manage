@@ -1,3 +1,12 @@
+# Current Task Log
+
+Last updated: 2026-04-06 16:38:50 CST
+Update mode: migrated
+Git state before update: legacy
+
+## Legacy Snapshot
+
+```md
 # Current Task
 
 Generated at: 2026-04-06 16:14:41 CST
@@ -26,6 +35,39 @@ bash scripts/finalize_change.sh
 - Findings-first review result
 
 ## Notes
+
+- If any `P1` or `P2` finding exists, completion is blocked.
+- Do not declare completion before the finalize gate passes.
+
+```
+
+## Task Entry 1
+
+Generated at: 2026-04-06 16:38:50 CST
+Entry mode: append
+Git state before update: dirty
+
+### Goal
+
+补 current-task 和 review-report 的增量更新逻辑
+
+### Required Workflow
+
+1. Read `AGENTS.md`
+2. Implement the change
+3. Before completion, run:
+
+```bash
+bash scripts/finalize_change.sh
+```
+
+### Expected Deliverable
+
+- Code changes aligned with the goal
+- Updated `artifacts/review-report.md`
+- Findings-first review result
+
+### Notes
 
 - If any `P1` or `P2` finding exists, completion is blocked.
 - Do not declare completion before the finalize gate passes.

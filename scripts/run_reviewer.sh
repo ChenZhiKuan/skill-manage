@@ -46,9 +46,24 @@ collect_git_diff() {
 collect_task_goal() {
   if [[ -f "$TASK_FILE" ]]; then
     awk '
-      /^## Goal$/ { capture=1; next }
-      /^## / && capture { exit }
-      capture { print }
+      /^### Goal$/ {
+        capture=1
+        current=""
+        next
+      }
+      /^### / && capture {
+        last=current
+        capture=0
+      }
+      capture {
+        current = current $0 ORS
+      }
+      END {
+        if (capture) {
+          last=current
+        }
+        printf "%s", last
+      }
     ' "$TASK_FILE" | sed '/^[[:space:]]*$/d'
   fi
 }
@@ -105,23 +120,61 @@ if [[ "$DIFF_MODE" == "scope-only" ]]; then
   : >"$TMP_STAGED_DIFF"
 fi
 
-{
-  echo "# Review Report"
+review_entry_count() {
+  if [[ ! -f "$REPORT_FILE" ]]; then
+    echo 0
+    return
+  fi
+
+  awk '/^## Review Entry [0-9]+$/ { count++ } END { print count + 0 }' "$REPORT_FILE"
+}
+
+git_state_label() {
+  if [[ "$DIFF_MODE" == "git-working-tree" ]]; then
+    echo "dirty"
+  else
+    echo "clean"
+  fi
+}
+
+write_review_log_header() {
+  local mode="$1"
+  local git_state="$2"
+
+  cat <<EOF
+# Review Report Log
+
+Last updated: $TIMESTAMP
+Update mode: $mode
+Git state before update: $git_state
+
+EOF
+}
+
+write_review_entry() {
+  local entry_number="$1"
+  local mode="$2"
+  local git_state="$3"
+
+  echo "## Review Entry $entry_number"
   echo
   echo "Generated at: $TIMESTAMP"
+  echo "Entry mode: $mode"
+  echo "Git state before update: $git_state"
   echo
-  echo "## Review Mode"
+  echo "### Review Mode"
   echo
   echo "- Mode: \`$DIFF_MODE\`"
   echo "- Prompt: \`REVIEW_PROMPT.md\`"
   echo "- Checklist: \`REVIEW_CHECKLIST.md\`"
   echo
-  echo "## Change Summary"
+  echo "### Change Summary"
   echo
   echo "- Goal: ${TASK_GOAL:-}"
   echo "- Files changed / reviewed:"
   if [[ "$DIFF_MODE" == "git-working-tree" ]]; then
     if [[ ${#CHANGED_FILES[@]} -gt 0 ]]; then
+      local file
       for file in "${CHANGED_FILES[@]}"; do
         echo "  - \`$file\`"
       done
@@ -129,24 +182,25 @@ fi
       echo "  - \`No path-level status entries captured; review the diff sections below.\`"
     fi
   else
+    local file
     for file in "${SCOPE_FILES[@]}"; do
       echo "  - \`$file\`"
     done
   fi
   echo "- Expected behavior:"
   echo
-  echo "## Harness Checks"
+  echo "### Harness Checks"
   echo
   echo "- Command: \`bash scripts/review_harness.sh\`"
   echo "- Result: PASS"
   echo "- Optional bind smoke run: no"
   echo
-  echo "## Review Context"
+  echo "### Review Context"
   echo
   if [[ "$DIFF_MODE" == "git-working-tree" ]]; then
     echo "Git working tree detected. Review should prioritize these changes:"
     echo
-    echo "### Git Status"
+    echo "#### Git Status"
     echo
     echo '```text'
     if [[ -s "$TMP_STATUS" ]]; then
@@ -156,7 +210,7 @@ fi
     fi
     echo '```'
     echo
-    echo "### Unstaged Diff"
+    echo "#### Unstaged Diff"
     echo
     echo '```diff'
     if [[ -s "$TMP_DIFF" ]]; then
@@ -166,7 +220,7 @@ fi
     fi
     echo '```'
     echo
-    echo "### Staged Diff"
+    echo "#### Staged Diff"
     echo
     echo '```diff'
     if [[ -s "$TMP_STAGED_DIFF" ]]; then
@@ -183,35 +237,74 @@ fi
     echo "Tip: now that the project is in git, prefer running review before commit so the reviewer packet can focus on the active working tree changes."
   fi
   echo
-  echo "## Findings"
+  echo "### Findings"
   echo
-  echo "### P1"
-  echo
-  echo "- None"
-  echo
-  echo "### P2"
+  echo "#### P1"
   echo
   echo "- None"
   echo
-  echo "### P3"
+  echo "#### P2"
   echo
   echo "- None"
   echo
-  echo "## Residual Risks"
+  echo "#### P3"
   echo
   echo "- None"
   echo
-  echo "## Reviewer Verdict"
+  echo "### Residual Risks"
+  echo
+  echo "- None"
+  echo
+  echo "### Reviewer Verdict"
   echo
   echo "- Verdict: \`PASS / FAIL / PARTIAL\`"
   echo "- Reviewer:"
   echo "- Reviewed at:"
   echo
-  echo "## Notes"
+  echo "### Notes"
   echo
   echo "- If any \`P1\` or \`P2\` finding exists, completion must be blocked."
   echo "- If no findings exist, explicitly keep \`None\` entries rather than deleting sections."
-} >"$REPORT_FILE"
+}
 
-echo "[reviewer] wrote reviewer packet to $REPORT_FILE"
+MODE_LABEL="reset"
+GIT_STATE="clean"
+ENTRY_NUMBER="1"
+TMP_REPORT="$(mktemp -t skill-manage-review-report.XXXXXX)"
+
+if [[ "$DIFF_MODE" == "git-working-tree" && -f "$REPORT_FILE" ]]; then
+  MODE_LABEL="append"
+  GIT_STATE="$(git_state_label)"
+  ENTRY_NUMBER="$(( $(review_entry_count) + 1 ))"
+else
+  GIT_STATE="$(git_state_label)"
+fi
+
+{
+  if [[ "$MODE_LABEL" == "reset" ]]; then
+    write_review_log_header "$MODE_LABEL" "$GIT_STATE"
+  else
+    if [[ -f "$REPORT_FILE" ]] && grep -q '^## Review Entry [0-9]\+$' "$REPORT_FILE"; then
+      cat "$REPORT_FILE"
+      echo
+    elif [[ -f "$REPORT_FILE" ]]; then
+      write_review_log_header "migrated" "legacy"
+      echo "## Legacy Snapshot"
+      echo
+      echo '```md'
+      cat "$REPORT_FILE"
+      echo
+      echo '```'
+      echo
+    else
+      write_review_log_header "$MODE_LABEL" "$GIT_STATE"
+    fi
+  fi
+
+  write_review_entry "$ENTRY_NUMBER" "$MODE_LABEL" "$GIT_STATE"
+} >"$TMP_REPORT"
+
+mv "$TMP_REPORT" "$REPORT_FILE"
+
+echo "[reviewer] wrote reviewer packet to $REPORT_FILE ($MODE_LABEL)"
 echo "[reviewer] mode: $DIFF_MODE"
