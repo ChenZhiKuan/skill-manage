@@ -1,0 +1,66 @@
+{
+  "cases": [
+    {
+      "id": "home_path_view_renders",
+      "title": "首页按路径视图可渲染",
+      "kind": "module_call",
+      "goal": "验证用户能看到基础 skill 浏览页和路径视图入口。",
+      "input": {
+        "target": "render_home",
+        "args": ["path"]
+      },
+      "expect": {
+        "contains": [
+          "本机 Skill 地图",
+          "按路径分类",
+          "Skill Atlas"
+        ]
+      }
+    },
+    {
+      "id": "skills_api_nonempty",
+      "title": "技能列表非空",
+      "kind": "module_call",
+      "goal": "验证本地 skill 扫描结果非空。",
+      "input": {
+        "target": "load_skills",
+        "args": []
+      },
+      "expect": {
+        "json_list_nonempty": true
+      }
+    },
+    {
+      "id": "detail_page_renders_first_skill",
+      "title": "详情页可渲染首个技能",
+      "kind": "module_call",
+      "goal": "验证用户能进入一个 skill 详情页并看到关键元数据。",
+      "input": {
+        "target": "render_detail",
+        "from_first_skill": true
+      },
+      "expect": {
+        "contains_fields_from_first_skill": [
+          "title",
+          "skill_path"
+        ]
+      }
+    },
+    {
+      "id": "discover_empty_query_returns_recommendations",
+      "title": "空查询返回推荐",
+      "kind": "module_call",
+      "goal": "验证发现面板在空查询时仍然返回推荐模式。",
+      "input": {
+        "target": "discover_skills",
+        "args": [""]
+      },
+      "expect": {
+        "json_field_equals": {
+          "mode": "recommend"
+        },
+        "json_list_nonempty": "suggestions"
+      }
+    }
+  ]
+}

@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_FILE="$ROOT_DIR/app.py"
 JS_FILE="$ROOT_DIR/static/app.js"
+TASK_EVAL_RUNNER="$ROOT_DIR/scripts/run_task_evals.py"
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-8421}"
 BASE_URL="http://${HOST}:${PORT}"
@@ -120,24 +121,27 @@ assert parsed[0].package == "vercel-labs/agent-skills@vercel-react-best-practice
 assert parsed[0].url == "https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practices"
 PY
 
-echo "[review] step 3/5: optional bind smoke mode"
+echo "[review] step 3/5: task-level evals"
+python3 "${TASK_EVAL_RUNNER}"
+
+echo "[review] step 4/5: optional bind smoke mode"
 if [[ "${RUN_BIND_SMOKE}" == "1" ]]; then
   require_cmd curl
   python3 "${APP_FILE}" --host "${HOST}" --port "${PORT}" >"${SERVER_LOG}" 2>&1 &
   SERVER_PID=$!
   wait_for_server
 
-  echo "[review] step 4/5: endpoint checks"
+  echo "[review] step 5/5: endpoint checks"
   assert_json_contains "${BASE_URL}/api/health" "health_ok"
   assert_json_contains "${BASE_URL}/api/skills" "skills_nonempty"
   assert_json_contains "${BASE_URL}/api/discover-skills" "discover_recommendations"
 
-  echo "[review] step 5/5: page smoke checks"
+  echo "[review] step 5/5: page request smoke checks"
   curl -fsS "${BASE_URL}/" >/dev/null
   curl -fsS "${BASE_URL}/?view=category" >/dev/null
 else
   echo "[review] bind smoke disabled (set RUN_BIND_SMOKE=1 to enable)"
-  echo "[review] step 4/5: endpoint contract skipped"
+  echo "[review] step 5/5: endpoint contract skipped"
   echo "[review] step 5/5: page request smoke skipped"
 fi
 

@@ -5,9 +5,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TASK_FILE="$ROOT_DIR/artifacts/current-task.md"
 REPORT_FILE="$ROOT_DIR/artifacts/review-report.md"
+HARNESS_SCRIPT="$ROOT_DIR/scripts/review_harness.sh"
 TMP_DIFF="$(mktemp -t skill-manage-review-diff.XXXXXX)"
 TMP_STAGED_DIFF="$(mktemp -t skill-manage-review-staged-diff.XXXXXX)"
 TMP_STATUS="$(mktemp -t skill-manage-review-status.XXXXXX)"
+TMP_HARNESS="$(mktemp -t skill-manage-harness.XXXXXX)"
 TIMESTAMP="$(date '+%Y-%m-%d %H:%M:%S %Z')"
 GIT_REVIEW_PATHS=(
   "."
@@ -19,6 +21,7 @@ cleanup() {
   rm -f "$TMP_DIFF"
   rm -f "$TMP_STAGED_DIFF"
   rm -f "$TMP_STATUS"
+  rm -f "$TMP_HARNESS"
 }
 
 trap cleanup EXIT
@@ -66,6 +69,86 @@ collect_task_goal() {
       }
     ' "$TASK_FILE" | sed '/^[[:space:]]*$/d'
   fi
+}
+
+run_harness_snapshot() {
+  if bash "$HARNESS_SCRIPT" >"$TMP_HARNESS" 2>&1; then
+    HARNESS_EXIT=0
+  else
+    HARNESS_EXIT=$?
+  fi
+}
+
+harness_result_label() {
+  if [[ "${HARNESS_EXIT:-1}" -eq 0 ]]; then
+    echo "PASS"
+  else
+    echo "FAIL"
+  fi
+}
+
+task_eval_ran() {
+  [[ -f "$TMP_HARNESS" ]] && grep -q '^\[task-eval\] SUMMARY ' "$TMP_HARNESS"
+}
+
+task_eval_result_label() {
+  if ! task_eval_ran; then
+    echo "NOT_RUN"
+  elif grep -q '^\[task-eval\] RESULT PASS$' "$TMP_HARNESS"; then
+    echo "PASS"
+  else
+    echo "FAIL"
+  fi
+}
+
+bind_smoke_ran() {
+  [[ -f "$TMP_HARNESS" ]] && grep -q '^\[review\] step 5/5: endpoint checks$' "$TMP_HARNESS"
+}
+
+bind_smoke_label() {
+  if bind_smoke_ran; then
+    echo "yes"
+  else
+    echo "no"
+  fi
+}
+
+emit_task_eval_case_lines() {
+  if [[ ! -f "$TMP_HARNESS" ]]; then
+    return
+  fi
+
+  awk '
+    /^\[task-eval\] PASS / {
+      id = $0
+      sub(/^\[task-eval\] PASS /, "", id)
+      print "  - PASS `" id "`"
+    }
+    /^\[task-eval\] FAIL / {
+      line = $0
+      sub(/^\[task-eval\] FAIL /, "", line)
+      split(line, parts, ": ")
+      id = parts[1]
+      message = line
+      sub(/^[^:]+: /, "", message)
+      print "  - FAIL `" id "` — " message
+    }
+  ' "$TMP_HARNESS"
+}
+
+emit_task_eval_failed_case_ids() {
+  if [[ ! -f "$TMP_HARNESS" ]]; then
+    return
+  fi
+
+  awk '
+    /^\[task-eval\] FAIL / {
+      line = $0
+      sub(/^\[task-eval\] FAIL /, "", line)
+      sub(/:.*$/, "", line)
+      print line
+    }
+  ' "$TMP_HARNESS"
 }
 
 strip_generated_artifact_noise() {
@@ -119,6 +202,8 @@ if [[ "$DIFF_MODE" == "scope-only" ]]; then
   : >"$TMP_DIFF"
   : >"$TMP_STAGED_DIFF"
 fi
+
+run_harness_snapshot
 
 review_entry_count() {
   if [[ ! -f "$REPORT_FILE" ]]; then
@@ -192,8 +277,26 @@ write_review_entry() {
   echo "### Harness Checks"
   echo
   echo "- Command: \`bash scripts/review_harness.sh\`"
-  echo "- Result: PASS"
-  echo "- Optional bind smoke run: no"
+  echo "- Result: $(harness_result_label)"
+  echo "- Optional bind smoke run: $(bind_smoke_label)"
+  echo
+  echo "### Task-Level Eval Summary"
+  echo
+  if task_eval_ran; then
+    echo "- Ran task-level evals: yes"
+  else
+    echo "- Ran task-level evals: no"
+  fi
+  echo "- Result: \`$(task_eval_result_label)\`"
+  echo "- Cases:"
+  emit_task_eval_case_lines
+  if task_eval_ran && [[ "$(task_eval_result_label)" == "FAIL" ]]; then
+    echo "- Failed case ids:"
+    while IFS= read -r case_id; do
+      [[ -z "$case_id" ]] && continue
+      echo "  - \`$case_id\`"
+    done < <(emit_task_eval_failed_case_ids)
+  fi
   echo
   echo "### Review Context"
   echo

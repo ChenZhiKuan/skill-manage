@@ -97,9 +97,10 @@ skill-manage/
 1. 记录任务
 2. 修改代码
 3. 跑本地确定性检查
-4. 生成 reviewer packet
-5. 进入完成 gate
-6. 根据 findings 决定是继续修复还是允许结束
+4. 跑任务级验收 case
+5. 生成 reviewer packet
+6. 进入完成 gate
+7. 根据 findings 决定是继续修复还是允许结束
 
 ### 流程图
 
@@ -120,7 +121,7 @@ dev_task.sh check
     |
     v
 review_harness.sh
-(语法检查 + smoke test)
+(语法检查 + smoke test + task-level eval)
     |
     v
 dev_task.sh review
@@ -178,6 +179,7 @@ finalize_change.sh
   - 本地检查脚本
   - 包含 Python / JS 语法检查
   - 默认包含进程内渲染 smoke test
+  - 默认包含 task-level eval
   - 可选包含服务启动与 `/api/health`、`/api/skills` 检查
 - `scripts/finalize_change.sh`
   - 统一完成出口
@@ -216,6 +218,18 @@ finalize_change.sh
   - 脚本会在首次运行时自动迁移成 log 结构，并保留 `Legacy Snapshot`
 
 这样做的目的，是避免同一批未提交改动里连续迭代 A、B 两个需求时，后一个条目把前一个条目直接覆盖掉。
+
+### 什么是 task-level eval
+
+除了“系统能启动、接口能返回、页面能渲染”这些 smoke checks 之外，项目现在还补了一层 task-level eval。
+
+这一层的目标不是把 `skill-manage` 变成重型测试框架，而是补几组最核心的 golden cases，验证：
+
+- 首页主路径是否仍然成立
+- 详情页关键元数据是否还能正确展示
+- Discover 推荐模式是否仍然成立
+
+这样 harness 不再只验证“系统还活着”，也开始验证“这次核心任务是否真的做对了”。
 
 ### 推荐开发流程
 

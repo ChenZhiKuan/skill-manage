@@ -24,6 +24,13 @@ bash scripts/dev_task.sh check
 bash scripts/review_harness.sh
 ```
 
+这里的本地 harness 默认包含：
+
+- 语法检查
+- in-process smoke checks
+- task-level evals
+- 可选 bind smoke
+
 2. 阅读并执行：
 
 ```text
